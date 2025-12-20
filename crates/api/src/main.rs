@@ -7,6 +7,8 @@ use axum::{
 };
 use serde::Deserialize;
 use sqlx::PgPool;
+use dotenvy::dotenv;
+use std::env;
 
 #[derive(Deserialize, serde::Serialize)]
 struct SignInUser {
@@ -31,7 +33,7 @@ async fn sign_in(
         email,
         password
     ).execute(&db).await.unwrap();
-    
+
     Json(SignInResponse{
         email, password
     })
@@ -47,7 +49,12 @@ async fn default_fallback() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
-    let db = PgPool::connect("postgresql://neondb_owner:npg_OzqwJVEs5YM0@ep-sparkling-waterfall-a4qtgccn-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require").await.unwrap();
+    dotenv().ok();
+
+    let database_url = env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set");
+
+    let db = PgPool::connect(&database_url).await.unwrap();
 
     let app = Router::new()
         .route("/", get(root))
