@@ -1,18 +1,43 @@
-use argon2::{Argon2, PasswordHasher, PasswordVerifier};
+use anyhow::{self};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
     extract::State,
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use chrono::{Duration, Utc};
 use dotenvy::dotenv;
+use jsonwebtoken::{EncodingKey, Header, encode};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use sqlx::Row; 
-use jsonwebtoken::{encode, Header, EncodingKey};
-use chrono::{Utc, Duration};
+use sqlx::Row;
 use std::env;
+
+struct AppError(anyhow::Error);
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error" : "Something went wrong"
+            })),
+        )
+            .into_response()
+    }
+}
+
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
+}
 
 #[derive(Deserialize, serde::Serialize)]
 struct SignInUser {
@@ -35,55 +60,71 @@ struct SignInResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
-    sub : String,
-    exp : usize
+    sub: String,
+    exp: usize,
 }
 
-async fn sign_in(State(db): State<PgPool>, Json(payload): Json<SignInUser>) -> impl IntoResponse {
+async fn sign_in(
+    State(db): State<PgPool>,
+    Json(payload): Json<SignInUser>,
+) -> Result<impl IntoResponse, AppError> {
     let SignInUser { email, password } = payload;
 
-    let row = sqlx::query("SELECT id, email, password FROM users WHERE email = $1")
+    let user = sqlx::query("SELECT id, email, password FROM users WHERE email = $1")
         .bind(&email)
         .persistent(false)
         .fetch_optional(&db)
-        .await
-        .unwrap();
+        .await?;
 
-    if row.is_none() {
-        return Json(serde_json::json!({"error" : "User not found"}));
+    if let Some(user) = user {
+        let hashed: String = user.get("password");
+
+        let parsed_hash = PasswordHash::new(&hashed).map_err(|e| anyhow::anyhow!(e))?;
+
+        let is_valid = Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok();
+
+        if !is_valid {
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error" : "Invalid credentials"
+                })),
+            ));
+        }
+
+        let expiration = Utc::now() + Duration::hours(24);
+
+        let claims = Claims {
+            sub: email,
+            exp: expiration.timestamp() as usize,
+        };
+
+        let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+        return Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "logged_in",
+                "token": token
+            })),
+        ));
     }
 
-    let user = row.unwrap();
-    let hashed : String = user.get("password");
-
-    let password_hash = argon2::password_hash::PasswordHash::new(&hashed).unwrap();
-
-    let argon2 = Argon2::default();
-
-    if argon2
-        .verify_password(password.as_bytes(), &password_hash)
-        .is_err()
-    {
+    Ok((
+        StatusCode::UNAUTHORIZED,
         Json(serde_json::json!({
-            "error": "Invalid credentials"
-        }));
-    }
-
-    let expiration = Utc::now() + Duration::hours(24);
-
-    let claims = Claims {
-        sub : email.clone(),
-        exp : expiration.timestamp() as usize,
-    };
-
-    let secret = "Uday62832983";
-
-    let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref())).unwrap();
-
-    Json(serde_json::json!({
-        "status": "logged_in",
-        "token" : token
-    }))
+            "error" : "Invalid credentials"
+        })),
+    ))
 }
 
 async fn sign_up(State(db): State<PgPool>, Json(payload): Json<SignUpUser>) -> impl IntoResponse {

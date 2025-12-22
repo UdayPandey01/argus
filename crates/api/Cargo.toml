@@ -15,4 +15,5 @@ argon2 = "0.5"
 rand_core = { version = "0.6", features = ["std"] }
 jsonwebtoken = "9"
 chrono = "0.4"
+anyhow = "1"
 my_core = {path = "../my_core"}
