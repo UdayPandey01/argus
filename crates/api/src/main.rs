@@ -127,7 +127,10 @@ async fn sign_in(
     ))
 }
 
-async fn sign_up(State(db): State<PgPool>, Json(payload): Json<SignUpUser>) -> impl IntoResponse {
+async fn sign_up(
+    State(db): State<PgPool>, 
+    Json(payload): Json<SignUpUser>
+) -> Result<impl IntoResponse, AppError> {
     let SignUpUser {
         username,
         email,
@@ -142,17 +145,23 @@ async fn sign_up(State(db): State<PgPool>, Json(payload): Json<SignUpUser>) -> i
         .unwrap()
         .to_string();
 
-    sqlx::query("INSERT INTO users (username, email, password) VALUES ($1, $2, $3)")
+    let result = sqlx::query("INSERT INTO users (username, email, password) VALUES ($1, $2, $3)")
         .bind(&username)
         .bind(&email)
         .bind(&hashed_password)
         .execute(&db)
-        .await
-        .unwrap();
+        .await;
 
-    Json(serde_json::json!({
-        "status": "user_created"
-    }))
+    match result {
+        Ok(_) => Ok((
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "status": "user_created" })),
+        )),
+        Err(_) => Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "User already exists" })),
+        ))
+    }
 }
 
 async fn root() -> impl IntoResponse {
@@ -168,6 +177,7 @@ async fn main() {
     dotenv().ok();
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let jwt_secret = env::var("JWT_SECRET").expect("JSWT_SECRET not set");
 
     let db = PgPool::connect(&database_url).await.unwrap();
 
@@ -181,5 +191,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();
+    println!("Server running on post 3000");
     axum::serve(listener, app).await.unwrap();
 }
