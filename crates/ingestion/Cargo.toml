@@ -7,3 +7,4 @@ edition = "2024"
 alloy = { version = "1.6.3", features = ["full"] }
 tokio = { version = "1.50.0", features = ["full"] }
 dotenvy = "0.15"
+futures-util = "0.3.32"
