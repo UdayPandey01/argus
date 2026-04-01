@@ -2,11 +2,14 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder, WsConnect};
 use alloy::rpc::types::Filter;
 use alloy::sol;
-
 use alloy::sol_types::SolEvent;
-use dotenvy::dotenv;
+
 use futures_util::StreamExt;
+
+use dotenvy::dotenv;
 use std::env;
+
+use sqlx::PgPool;
 
 sol! {
     event Transfer(address indexed from, address indexed to, uint256 value);
@@ -15,6 +18,11 @@ sol! {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    println!("Connecting to db");
+
+    let pool = PgPool::connect(&db_url).await?;
+    println!("Connected to DB");
 
     let alchemy_ws_url =
         env::var("ALCHEMY_WS_URL").expect("ALCHEMY_WS_URL must be set in .env file");
@@ -39,12 +47,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(decode_log) => {
                 let transfer = decode_log.inner;
 
+                let tx_hash = log.transaction_hash.unwrap_or_default().to_string();
+                let sender = transfer.from.to_string();
+                let receiver = transfer.to.to_string();
+                let amount = transfer.value.to_string();
+
+                let result = sqlx::query!(
+                    "INSERT INTO usdt_transfers (tx_hash, sender, receiver, amount) VALUES ($1, $2, $3, $4)",
+                    tx_hash,
+                    sender,
+                    receiver,
+                    amount
+                )
+                .execute(&pool)
+                .await;
+
                 println!("USDT TRANSFER DETECTED");
                 println!("TRANSFER FROM: {}", transfer.from);
                 println!("TRANSFER TO: {}", transfer.to);
 
                 println!("RAW AMOUNT: {}", transfer.value);
                 println!("------------------------------------------");
+
+                match result {
+                    Ok(_) => println!("Saved to DB: {} sent to {}", sender, receiver),
+                    Err(e) => println!("Failed to save to DB: {:?}", e),
+                }
             }
             Err(e) => {
                 println!("Failed to decode a log: {:?}", e);
