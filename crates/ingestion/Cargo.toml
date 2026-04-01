@@ -8,4 +8,12 @@ alloy = { version = "1.6.3", features = ["full"] }
 tokio = { version = "1.50.0", features = ["full"] }
 dotenvy = "0.15"
 futures-util = "0.3.32"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "tls-rustls", "macros"] }
+sqlx = { version = "0.8.6", features = [
+    "runtime-tokio",
+    "postgres",
+    "tls-rustls",
+    "macros",
+] }
+rdkafka = { version = "0.39.0", features = ["cmake-build"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
